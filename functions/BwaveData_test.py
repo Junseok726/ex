@@ -39,7 +39,7 @@ class BwaveData_19:
                 raw = mne.io.read_raw_curry(file_dir, preload=True, verbose=False)
             to_EOG_channels(raw)
             raw = raw.pick_channels(['FP1', 'FP2', 'F7', 'F3', 'FZ', 'F4', 'F8', 'T7', 'C3', 'CZ', 'C4', 'T8',
-                                     'P7', 'P3', 'PZ', 'P4', 'P8', 'O1', 'O2', 'VEO', 'HEO'], ordered=True)
+                                     'P7', 'P3', 'PZ', 'P4', 'P8', 'O1', 'O2', 'OZ','VEO', 'HEO'], ordered=True)
             raw.set_channel_types({'VEO': 'eog', 'HEO': 'eog'})
             montage = mne.channels.read_custom_montage(os.path.join(FUNCDATA_DIR, 'channel_neuroscan_rev2_m.xyz'))
             raw.set_montage(montage)
@@ -63,6 +63,7 @@ class BwaveData_19:
             raw = mne.io.read_raw_egi(file_dir, preload=True, verbose=False)
 
             raw_rename_val = raw.info['ch_names']
+
             raw_rename_key = ['F10', 'AF4', 'F2', 'FCZ', 'FP2', 'FZ', 'FC1', 'AFZ', 'F1', 'FP1', 'AF3', 'F3', 'F5',
                               'FC5',
                               'FC3', 'C1', 'F9', 'F7', 'FT7', 'C3', 'CP1', 'C5', 'T9', 'T7', 'TP7', 'CP5', 'P5', 'P3',
@@ -75,7 +76,11 @@ class BwaveData_19:
 
             to_EOG_channels_egi(raw)
 
-            egi2neuro(raw)  # TODO : interpolation : 여기 있으면 안됨, 위치 옮겨야댐
+            raw = raw.pick_channels(['FP1', 'FP2', 'F7', 'F3', 'FZ', 'F4', 'F8', 'T7', 'C3', 'CZ', 'C4', 'T8',
+                                     'P7', 'P3', 'PZ', 'P4', 'P8', 'O1', 'O2', 'VEO', 'HEO'], ordered=True)
+            raw.set_channel_types({'VEO': 'eog', 'HEO': 'eog'})
+
+            # egi2neuro(raw)  # TODO : interpolation : 여기 있으면 안됨, 위치 옮겨야댐
 
             new_names = dict((ch_name, ch_name.rstrip('.').upper().replace('Z', 'z').replace('FP', 'Fp')) for ch_name in
                              raw.ch_names)
@@ -89,13 +94,13 @@ class BwaveData_19:
         print('reg')
 
         # Remove EOG
-        temp_epochs = mne.make_fixed_length_epochs(self.raw, duration=5, preload=True, verbose=show)
+        temp_epochs = mne.make_fixed_length_epochs(self.raw, duration=10, preload=True, verbose=show)
         _, betas = mne.preprocessing.regress_artifact(temp_epochs.copy().subtract_evoked(), verbose=show)
         raw_clean, _ = mne.preprocessing.regress_artifact(self.raw, betas=betas, verbose=show)
         # Filtering
         filtered = raw_clean.filter(1, 55, n_jobs=1, verbose=show, method='iir')
         # Epoch
-        prep_epochs = mne.make_fixed_length_epochs(filtered, duration=5, preload=False, verbose=show).load_data()
+        prep_epochs = mne.make_fixed_length_epochs(filtered, duration=10, preload=False, verbose=show).load_data()
         prep_epochs = prep_epochs.pick_types(eeg=True, verbose=show)
         prep_epochs = prep_epochs.apply_baseline((None, None))
         # Global Threshold
@@ -110,18 +115,18 @@ class BwaveData_19:
         epoch_dat = prep_epochs.get_data()
         bad_t_index = []  # raw값
         for p in range(epoch_dat[0, :, 0].shape[0]):
+            # TODO: STD 범위 다시검증
             maxt = np.max(abs(epoch_dat[:, p]), axis=1)
+            threshold = np.mean(maxt) + 3 * np.std(maxt)
             for q in range(len(maxt)):
-                # TODO: STD 범위 다시검증
-                threshold = np.mean(maxt) + 3 * np.std(maxt)
                 if maxt[q] >= threshold:
                     bad_t_index.append(q)
 
         bad_t_d_index = []  # 차분값
         for p in range(epoch_dat[0, :, 0].shape[0]):
             maxt_d = np.max(abs(np.diff(epoch_dat[:, p])), axis=1)
+            threshold = np.mean(maxt_d) + 3 * np.std(maxt_d)
             for q in range(len(maxt_d)):
-                threshold = np.mean(maxt_d) + 3 * np.std(maxt_d)
                 if maxt_d[q] >= threshold:
                     bad_t_d_index.append(q)
         bad_e_index = bad_t_index + bad_t_d_index
@@ -179,12 +184,7 @@ class BwaveData_19:
         samplefreq = self.samplefreq
 
         arr = self.source if source else self.prep_epochs
-
         psds, freqs = mne.time_frequency.psd_welch(arr, fmin=1., fmax=55., n_fft=samplefreq, verbose=show)
-
-        # normalization
-        psds /= np.sum(psds, axis=-1, keepdims=True)  # (epochs, sensors, freq)
-
         X = []
         for fmin, fmax in FREQ_BANDS.values():
             psds_band = psds[:, :, (freqs >= fmin) & (freqs < fmax)].mean(axis=(0, 2))
@@ -198,77 +198,53 @@ class BwaveData_19:
             self.psd = psd_mat_7band_av.reshape(1, -1)  # [band0, band1, band2, ...]
         return psd_mat_7band_av.reshape(1, -1)  # (channels * 7)
 
-    def calcul(self, plvs, epoc_dat, c1, c2):
-        x1_ht = epoc_dat[:, c1, :]
-        x2_ht = epoc_dat[:, c2, :]
-        phase1 = np.unwrap(np.angle(x1_ht))
-        phase2 = np.unwrap(np.angle(x2_ht))
-        complex_phase_diff = np.exp(complex(0, 1) * (phase1 - phase2))
-        plv = np.mean(np.abs(np.sum(complex_phase_diff / phase1.shape[1], axis=1)))
-        plvs[c1, c2] = plv
-        return plvs
+    def wrapToPi(self, phi1, phi2):
+        phi = phi1 - phi2
+        xwrap = np.remainder(phi, 2 * np.pi)
+        mask = np.abs(xwrap) > np.pi
+        xwrap[mask] -= 2 * np.pi * np.sign(xwrap[mask])
+        return xwrap
 
-    def phase_locking_value(self, filtered, sens_comb):
+    def wPLI(self, filtered, sens_comb):
         h_filtered = filtered.apply_hilbert()
         epoc_dat = h_filtered.get_data()
-        # print("calcul start")
         _, sen_no, _ = epoc_dat.shape
-        plvs = np.zeros((sen_no, sen_no, 1))
-        plvs = Parallel(n_jobs=2)(delayed(self.calcul)(plvs, epoc_dat, c1, c2) for c1, c2 in sens_comb)
-        return plvs[0]
+        wplis = np.zeros((sen_no, sen_no, 1))
+        for c1, c2 in sens_comb:
+            x1_ht = epoc_dat[:, c1, :]
+            x2_ht = epoc_dat[:, c2, :]
+            phi1 = np.angle(x1_ht)
+            phi2 = np.angle(x2_ht)
+            d_phi = self.wrapToPi(phi1, phi2)
+            wPLI_element = abs(np.mean(d_phi, axis=1)) / np.mean(abs(d_phi), axis=1)
+            wpli = np.mean(wPLI_element)
+            if np.isnan(wpli):
+                wpli = 0
+            wplis[c1, c2] = wpli
+        return wplis
 
-    def FC(self, source=False, show=False):
+    def FC(self, source=False): #wPLI
         print("FC :", end=" ", flush=True)
         start = time.time()
         _, sen_no, _ = self.prep_epochs.get_data().shape
         sens_comb = list(itertools.combinations(range(sen_no), 2))
 
-        plv_temp = Parallel(n_jobs=7)(delayed(self.phase_locking_value)(
+        wpli_temp = Parallel(n_jobs=7)(delayed(self.wPLI)(
             self.prep_epochs.copy().filter(int(fmin), int(fmax), n_jobs=1, verbose=False, method='iir'), sens_comb) for
-                                      fmin, fmax
-                                      in FREQ_BANDS.values())
+                                      fmin, fmax in FREQ_BANDS.values())
 
-        # plv_mat = np.concatenate(result, axis=2).swapaxes(0,1)
-        plv_mat = np.concatenate(plv_temp, axis=2)
-        plv_flatten = plv_mat[plv_mat != 0]
+        wpli_mat = np.concatenate(wpli_temp, axis=2)
+        wpli_flatten = wpli_mat[wpli_mat != 0]
 
         if source:
-            self.s_fc_f = plv_flatten.reshape(1, -1)
-            self.s_fc = plv_mat
+            self.s_fc_f = wpli_flatten.reshape(1, -1)
+            self.s_fc = wpli_mat
         else:
-            self.fc_f = plv_flatten.reshape(1, -1)
-            self.fc = plv_mat
+            self.fc_f = wpli_flatten.reshape(1, -1)
+            self.fc = wpli_mat
         sec = time.time() - start
         print(int(sec), 'sec')
-        return plv_mat, plv_flatten.reshape(1, -1)
-
-    '''
-    def FC(self, source=False, show=False): #mne_plv
-        print("FC :", end=" ", flush=True)
-        start = time.time()
-
-        # TODO: NOT PLV / imgcoh (mne), wpli (new method)
-        temp = []
-        for fmin, fmax in FREQ_BANDS.values():
-            plv, freqs, times, n_epochs, n_tapers = mne.connectivity.spectral_connectivity(self.prep_epochs,method='plv', fmin=fmin,
-                                                                                           fmax=fmax, tmin=0,sfreq=self.samplefreq, verbose=show,faverage=True)
-            temp.append(plv)
-        plv_mat = np.concatenate(temp, axis=2)
-        # TODO: try reshape->!= 0
-        # TODO: diagonal 성분 0으로 변환
-        plvs = plv_mat[plv_mat != 0]
-        sec = time.time() - start
-        print(int(sec), 'sec')
-        self.fc_f = plvs.reshape(1, -1)
-        self.fc = plv_mat
-        if source:
-            self.s_fc_f = plvs.reshape(1, -1)
-            self.s_fc = plv_mat
-        else:
-            self.fc_f = plvs.reshape(1, -1)
-            self.fc = plv_mat
-        return plvs.reshape(1, -1), plv_mat  # (freq_band(7)*nC2 plv) / 1차원, #(sens no, sens no, freq_band(7)) 위로 삼각행렬
-    '''
+        return wpli_mat, wpli_flatten.reshape(1, -1)
 
     def NI(self, source=False):
         print("NI :", end=" ", flush=True)

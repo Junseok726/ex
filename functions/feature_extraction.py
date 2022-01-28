@@ -2,8 +2,9 @@ import os.path
 import pandas as pd
 import datetime
 from pathlib import Path
-from functions.BwaveData import BwaveData as bd
+# from functions.BwaveData import BwaveData as bd
 from directory import ROOT_DIR, DATABASE_DIR
+from functions.BwaveData_test import BwaveData_19 as bd
 
 
 class feature_extraction:
@@ -35,46 +36,54 @@ class feature_extraction:
 
 
     def extract_feature(self, features, desc):
-
         result = self.files.copy()
+        print("선택 data 개수: ", len(result))
 
         for feature in features:
             result[feature] = ''
+
         for i in range(len(self.files)):
-            line = self.files.iloc[i]
-            if line['target'] == 0:
-                file_dir = os.path.join(self.data_dir, 'HC')
+            try:
+                print('\n')
+                line = self.files.iloc[i]
+                if line['target'] == 0:
+                    file_dir = os.path.join(self.data_dir, 'HC')
 
-            elif line['target'] == 1:
-                file_dir = os.path.join(self.data_dir, 'MDD')
+                elif line['target'] == 1:
+                    file_dir = os.path.join(self.data_dir, 'MDD')
 
-            raw_file = bd()
-            raw_file.load_file(os.path.join(file_dir, line['filename']))
-            raw_file.preprocess()
+                raw_file = bd()
+                print(i+1, "-", line['filename'])
+                raw_file.load_file(os.path.join(file_dir, line['filename']))
+                raw_file.preprocess()
+                raw_file.prep_epochs.plot_psd(fmin=1, fmax=55, average=True, picks=['Oz'])
+                if raw_file.epoch_num > 10:
 
-            if raw_file.epoch_num > 25:
-                if 'psd' in features:
-                    raw_file.PSD()
-                    result.at[result.index[i], 'psd'] = raw_file.psd
-                if 'fc' in features:
-                    raw_file.FC()
-                    result.at[result.index[i], 'fc'] = raw_file.fc_f
-                if 'ni' in features:
-                    raw_file.NI()
-                    result.at[result.index[i], 'ni'] = raw_file.ni
-                if 's_psd' in features or 's_fc' in features or 's_ni' in features:
-                    raw_file.source_loc()
-                    if 's_psd' in features:
+                    if 'psd' in features:
                         raw_file.PSD()
-                        result.at[result.index[i], 's_psd'] = raw_file.s_psd
-                    if 's_fc' in features:
+                        result.at[result.index[i], 'psd'] = raw_file.psd
+                    if 'fc' in features:
                         raw_file.FC()
-                        result.at[result.index[i], 's_fc'] = raw_file.s_fc_f
-                    if 's_ni' in features:
+                        result.at[result.index[i], 'fc'] = raw_file.fc_f
+                    if 'ni' in features:
                         raw_file.NI()
-                        result.at[result.index[i], 's_ni'] = raw_file.s_ni
-            else:
-                print("이 데이터는 분석에 사용하기 충분한 epoch를 가지고 있지 않습니다.")
+                        result.at[result.index[i], 'ni'] = raw_file.ni
+                    if 's_psd' in features or 's_fc' in features or 's_ni' in features:
+                        raw_file.source_loc()
+                        if 's_psd' in features:
+                            raw_file.PSD()
+                            result.at[result.index[i], 's_psd'] = raw_file.s_psd
+                        if 's_fc' in features:
+                            raw_file.FC()
+                            result.at[result.index[i], 's_fc'] = raw_file.s_fc_f
+                        if 's_ni' in features:
+                            raw_file.NI()
+                            result.at[result.index[i], 's_ni'] = raw_file.s_ni
+                else:
+                    print("이 데이터는 분석에 사용하기 충분한 epoch를 가지고 있지 않습니다.")
+            except Exception as e:
+                print("오류: ", e)
+                pass
 
         result = result.drop(index=(result[result['psd'] == '']).index, columns=['index', 'filename', 'sex', 'age', 'source', 'sort', 'desc'])
         workspace = os.path.join(ROOT_DIR, self.time + '_' + desc)

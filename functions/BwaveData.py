@@ -86,7 +86,7 @@ class BwaveData:
             new_names = dict((ch_name, ch_name.rstrip('.').upper().replace('Z', 'z').replace('FP', 'Fp')) for ch_name in
                              raw.ch_names)
             raw.rename_channels(new_names)
-
+        raw = raw.notch_filter(freqs=np.arange(60, 241, 60))
         self.raw = raw
 
     def preprocess(self, show=False):
@@ -140,7 +140,7 @@ class BwaveData:
 
         # TODO: convert to logger
         print("Preprocessing :", int(sec), 'sec /', "epochs {} --> {}".format(epoch_no, self.epoch_num))
-        self.prep_epochs = prep_epochs
+        self.prep_epochs = prep_epochs.copy().crop(tmin=2.5, tmax=7.5, include_tmax=False)
         return prep_epochs
 
     def source_loc(self):
